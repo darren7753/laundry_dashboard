@@ -135,7 +135,7 @@ with col1:
     selected_year = st.selectbox("Pilih Tahun", years, index=0)
 
 with col2:
-    periods = ["Harian", "Mingguan", "BUlanan"]
+    periods = ["Harian", "Mingguan", "Bulanan"]
     selected_period = st.selectbox("Pilih Periode", periods, index=0)
 
 if selected_period == "Harian":
