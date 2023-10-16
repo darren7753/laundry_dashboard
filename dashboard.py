@@ -1,8 +1,14 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import altair as alt
+import datetime as dt
+import calendar
+
 from streamlit_gsheets import GSheetsConnection
+from numerize.numerize import numerize
 
 # Setup
 st.set_page_config(
@@ -74,8 +80,8 @@ month_mapping = {
 # df_transaksi
 df_transaksi_original = conn.read(spreadsheet=url, worksheet="0")
 df_transaksi_original = df_transaksi_original.replace("-", np.nan)
-df_transaksi_original.columns = [j if "Unnamed" in i else i for i, j in zip(df_transaksi_original.columns, df_transaksi_original.iloc[0])]
-df_transaksi_original = df_transaksi_original.iloc[1:].reset_index(drop=True)
+# df_transaksi_original.columns = [j if "Unnamed" in i else i for i, j in zip(df_transaksi_original.columns, df_transaksi_original.iloc[0])]
+# df_transaksi_original = df_transaksi_original.iloc[1:].reset_index(drop=True)
 
 for old_month, new_month in month_mapping.items():
     df_transaksi_original["Tgl Terima"] = df_transaksi_original["Tgl Terima"].str.replace(old_month, new_month, regex=True)
@@ -84,6 +90,21 @@ df_transaksi_original["Tgl Terima"] = pd.to_datetime(df_transaksi_original["Tgl 
 for old_month, new_month in month_mapping.items():
     df_transaksi_original["Tgl Selesai"] = df_transaksi_original["Tgl Selesai"].str.replace(old_month, new_month, regex=True)
 df_transaksi_original["Tgl Selesai"] = pd.to_datetime(df_transaksi_original["Tgl Selesai"], format="%d %b %Y %H:%M")
+
+# df_snapclean
+df_snapclean_original = conn.read(spreadsheet=url, worksheet="331647216")
+df_snapclean_original = df_snapclean_original.replace("-", np.nan)
+# df_snapclean_original.columns = [j if "Unnamed" in i else i for i, j in zip(df_snapclean_original.columns, df_snapclean_original.iloc[0])]
+# df_snapclean_original.columns = df_snapclean_original.columns.str.strip()
+# df_snapclean_original = df_snapclean_original.iloc[1:].reset_index(drop=True)
+
+for old_month, new_month in month_mapping.items():
+    df_snapclean_original["Tanggal Diterima"] = df_snapclean_original["Tanggal Diterima"].str.replace(old_month, new_month, regex=True)
+df_snapclean_original["Tanggal Diterima"] = pd.to_datetime(df_snapclean_original["Tanggal Diterima"], format="%d %b %Y %H:%M")
+
+for old_month, new_month in month_mapping.items():
+    df_snapclean_original["Tanggal Selesai"] = df_snapclean_original["Tanggal Selesai"].str.replace(old_month, new_month, regex=True)
+df_snapclean_original["Tanggal Selesai"] = pd.to_datetime(df_snapclean_original["Tanggal Selesai"], format="%d %b %Y %H:%M")
 
 # df_pembayaran
 df_pembayaran_original = conn.read(spreadsheet=url, worksheet="588904373")
@@ -127,7 +148,8 @@ df_biaya_original["Tanggal Pemakaian"] = pd.to_datetime(df_biaya_original["Tangg
 st.markdown(f"<h1 style='text-align: center; margin-bottom: 20px;'>LAUNDRY DASHBOARD</h1>", unsafe_allow_html=True)
 
 # Filters
-col1, col2, col3 = st.columns(3)
+st.markdown(f"<h3>🔍 Filters</h3>", unsafe_allow_html=True)
+col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
 with col1:
     years = [int(i) for i in df_transaksi_original["Tahun"].unique()]
@@ -145,32 +167,65 @@ elif selected_period == "Mingguan":
 else:
     resample = "M"
 
+current_year = dt.datetime.now().year
+
+if selected_year != current_year:
+    start_date_default = dt.datetime(selected_year, 1, 1)
+    
+    # Get the last day of December for the selected year
+    last_day_dec = calendar.monthrange(selected_year, 12)[1]
+    end_date_default = dt.datetime(selected_year, 12, last_day_dec)
+else:
+    start_date_default = dt.datetime(current_year, 1, 1)
+    end_date_default = dt.datetime.now()  # Today's date
+
 with col3:
+    selected_date_range = st.date_input("Pilih Rentang Tanggal", [start_date_default, end_date_default])
+
+with col4:
     outlets = df_transaksi_original["Outlet"].unique()
     default_outlet = ["Matahari Laundry Ciputat"]
-    selected_outlets = st.multiselect("Pilih Outlet", outlets, default=default_outlet)
+    selected_outlet = st.selectbox("Pilih Outlet", outlets)
+
+# Slicing
+start_date = pd.Timestamp(selected_date_range[0])
+end_date = pd.Timestamp(selected_date_range[1]).replace(hour=23, minute=59, second=59)
 
 df_transaksi = df_transaksi_original[
     (df_transaksi_original["Tahun"] == selected_year) &
-    (df_transaksi_original["Outlet"].isin(selected_outlets))
+    (df_transaksi_original["Outlet"] == selected_outlet) &
+    (df_transaksi_original["Tgl Terima"] >= start_date) &
+    (df_transaksi_original["Tgl Terima"] <= end_date)
 ].copy()
 
-df_pembayaran = df_pembayaran_original[
-    (df_pembayaran_original["Tahun"] == selected_year) &
-    (df_pembayaran_original["Outlet"].isin(selected_outlets))
-].copy()
-
-df_pengerjaan = df_pengerjaan_original[
-    (df_pengerjaan_original["Tahun"] == selected_year) &
-    (df_pengerjaan_original["Outlet"].isin(selected_outlets))
+df_snapclean = df_snapclean_original[
+    (df_snapclean_original["Tahun"] == selected_year) &
+    (df_snapclean_original["Outlet"] == selected_outlet) &
+    (df_snapclean_original["Tanggal Diterima"] >= start_date) &
+    (df_snapclean_original["Tanggal Diterima"] <= end_date)
 ].copy()
 
 df_biaya = df_biaya_original[
     (df_biaya_original["Tahun"] == selected_year) &
-    (df_biaya_original["Outlet"].isin(selected_outlets))
+    (df_biaya_original["Outlet"] == selected_outlet) &
+    (df_biaya_original["Tanggal Dibuat"] >= start_date) &
+    (df_biaya_original["Tanggal Dibuat"] <= end_date)
 ].copy()
 
+# df_pembayaran = df_pembayaran_original[
+#     (df_pembayaran_original["Tahun"] == selected_year) &
+#     (df_pembayaran_original["Outlet"] == selected_outlets)
+# ].copy()
+
+# df_pengerjaan = df_pengerjaan_original[
+#     (df_pengerjaan_original["Tahun"] == selected_year) &
+#     (df_pengerjaan_original["Outlet"] == selected_outlets)
+# ].copy()
+
+st.empty()
+
 # Metrics
+st.markdown(f"<h3>📋 Overview</h3>", unsafe_allow_html=True)
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
@@ -181,230 +236,235 @@ with col2:
 
 with col3:
     total_transaksi = int(np.sum(df_transaksi["Subtotal"] + df_transaksi["Tambahan Express"]))
-    st.metric(label="Total Transaksi", value=f"Rp{total_transaksi:,}", delta=None)
+    st.metric(label="Total Transaksi", value=f"Rp{numerize(total_transaksi, 1)}", delta=None)
 
 with col4:
     omzet_transaksi = int(np.sum(df_transaksi["Subtotal"] + df_transaksi["Tambahan Express"] - df_transaksi["Diskon"] + df_transaksi["Pajak"]))
-    st.metric(label="Omzet Transaksi", value=f"Rp{omzet_transaksi:,}", delta=None)
+    st.metric(label="Omzet Transaksi", value=f"Rp{numerize(omzet_transaksi, 1)}", delta=None)
 
 with col5:
     total_pengeluaran = int(df_biaya[df_biaya["Status"] == "Disetujui"]["Nominal Biaya"].sum())
-    st.metric(label="Total Pengeluaran", value=f"Rp{total_pengeluaran:,}", delta=None)
+    st.metric(label="Total Pengeluaran", value=f"Rp{numerize(total_pengeluaran, 1)}", delta=None)
 
-st.markdown(f'<style>{metric_css}</style>',unsafe_allow_html=True)
+st.empty()
 
-# Row
-title_box_css = """
-<style>
-    .title-box {
-        width: 100%;
-        background-color: #f5f5f7; /* Adjust this color if needed */
-        padding: 10px 0;
-        color: #5a606b;
-        text-align: center;
-        font-size: 24px; /* Adjust font size if needed */
-        margin-bottom: 20px;
-        height: 40px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        font-weight: 600;
-    }
-</style>
-"""
-st.markdown(title_box_css, unsafe_allow_html=True)
+# Charts
+st.markdown(f"<h3>📊 Charts</h3>", unsafe_allow_html=True)
 
-title = "ANALISIS TREN"
-st.markdown(f"<div class='title-box'>{title}</div>", unsafe_allow_html=True)
-
-col1 = st.columns(1)[0]
-
-tabs = ["Jumlah Transaksi", "Total Pelanggan", "Total Transaksi", "Omzet Transaksi", "Total Pengeluaran"]
-selected_tab = col1.selectbox("Choose a Metric", tabs, label_visibility="collapsed")
-
-if selected_tab == "Jumlah Transaksi":
-    title = "Jumlah Transaksi"
-    chart_data = df_transaksi.groupby(pd.to_datetime(df_transaksi["Tgl Terima"])).nunique()["No Nota"].resample(resample).sum().reset_index()
-    x_data = "Tgl Terima:T"
-    y_data = "No Nota:Q"
-elif selected_tab == "Total Pelanggan":
-    title = "Total Pelanggan"
-    chart_data = df_transaksi.groupby(pd.to_datetime(df_transaksi["Tgl Terima"])).nunique()["Customer"].resample(resample).sum().reset_index()
-    x_data = "Tgl Terima:T"
-    y_data = "Customer:Q"
-elif selected_tab == "Total Transaksi":
-    title = "Total Transaksi"
-    chart_data = df_transaksi.groupby(pd.to_datetime(df_transaksi["Tgl Terima"])).sum()[["Subtotal", "Tambahan Express"]].resample(resample).sum().reset_index()
-    chart_data["Total Transaksi"] = chart_data["Subtotal"] + chart_data["Tambahan Express"]
-    x_data = "Tgl Terima:T"
-    y_data = "Total Transaksi:Q"
-elif selected_tab == "Omzet Transaksi":
-    title = "Omzet Transaksi"
-    chart_data = df_transaksi.groupby(pd.to_datetime(df_transaksi["Tgl Terima"])).sum()[["Subtotal", "Tambahan Express", "Diskon", "Pajak"]].resample(resample).sum().reset_index()
-    chart_data["Omzet Transaksi"] = chart_data["Subtotal"] + chart_data["Tambahan Express"] - chart_data["Diskon"] + chart_data["Pajak"]
-    x_data = "Tgl Terima:T"
-    y_data = "Omzet Transaksi:Q"
-elif selected_tab == "Total Pengeluaran":
-    title = "Total Pengeluaran"
-    chart_data = df_biaya.groupby(pd.to_datetime(df_biaya["Tanggal Pemakaian"])).sum()["Nominal Biaya"].resample(resample).sum().reset_index()
-    x_data = "Tanggal Pemakaian:T"
-    y_data = "Nominal Biaya:Q"
-
-col1.markdown(f"<h5>Tren {title}</h5>", unsafe_allow_html=True)
-
-chart = alt.Chart(chart_data).mark_line(color="#3d39cc").encode(
-    x=alt.X(x_data, title=None),
-    y=alt.Y(y_data, title=title)
-).properties(
-    height=300
-).configure_axis(
-    grid=False
-)
-
-col1.altair_chart(chart, use_container_width=True)
-
-# Row
-title_box_css = """
-<style>
-    .title-box {
-        width: 100%;
-        background-color: #f5f5f7; /* Adjust this color if needed */
-        padding: 10px 0;
-        color: #5a606b;
-        text-align: center;
-        font-size: 24px; /* Adjust font size if needed */
-        margin-bottom: 20px;
-        height: 40px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        font-weight: 600;
-    }
-</style>
-"""
-st.markdown(title_box_css, unsafe_allow_html=True)
-
-title = "PENGELUARAN"
-st.markdown(f"<div class='title-box'>{title}</div>", unsafe_allow_html=True)
-
-def create_stacked_chart(data):
-    # Calculate the total 'Nominal Biaya' for each 'Untuk Akun Biaya'
-    total_biaya_per_akun = data.groupby('Untuk Akun Biaya')['Nominal Biaya'].sum()
-
-    # Calculate the 'Nominal Biaya' for each 'Diambil Dari Akun Kas' category within each 'Untuk Akun Biaya'
-    biaya_per_akun_and_kas = data.groupby(['Untuk Akun Biaya', 'Diambil Dari Akun Kas'])['Nominal Biaya'].sum().reset_index()
-
-    # Calculate the percentage and add it to the dataframe
-    biaya_per_akun_and_kas['percentage'] = biaya_per_akun_and_kas.apply(lambda row: row['Nominal Biaya'] / total_biaya_per_akun[row['Untuk Akun Biaya']], axis=1)
-
-    chart = alt.Chart(biaya_per_akun_and_kas).mark_bar().encode(
-        y=alt.Y('Untuk Akun Biaya:O', title='Untuk Akun Biaya'),
-        x=alt.X('percentage:Q', axis=alt.Axis(format='%', title=None)),
-        color=alt.Color('Diambil Dari Akun Kas:O', scale=alt.Scale(domain=list(color_mapping.keys()), range=list(color_mapping.values())), legend=None),
-        order=alt.Order(
-            'Diambil Dari Akun Kas:O',
-            sort='ascending'
-        ),
-        tooltip=[
-            alt.Tooltip('Untuk Akun Biaya:O', title='Untuk Akun Biaya'),
-            alt.Tooltip('Diambil Dari Akun Kas:O', title='Diambil Dari Akun Kas'),
-            alt.Tooltip('percentage:Q', title='Persentase', format='.0%'),
-            alt.Tooltip('Nominal Biaya:Q', title='Nominal Biaya')
-        ]
-    ).properties(
-        height=350
-    )
-
-    return chart
-
-# Unique values for 'Diambil Dari Akun Kas'
-unique_akun_kas = df_biaya['Diambil Dari Akun Kas'].dropna().unique()
-
-# Define a list of purple shades
-colors = ["#33348e", "#3d39cc", "#7d7bcf", "#6c6c6e", "#b5b4ba"]
-
-# Map colors to 'Diambil Dari Akun Kas' categories
-color_mapping = dict(zip(unique_akun_kas, colors))
-
-# Create charts for both statuses
-chart_disetujui = create_stacked_chart(df_biaya[df_biaya["Status"] == "Disetujui"])
-chart_ditolak = create_stacked_chart(df_biaya[df_biaya["Status"] == "Ditolak"])
-
-# Display the charts side-by-side
+# Pendapatan & Pengeluaran
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown(f"<h5>Status: Disetujui</h5>", unsafe_allow_html=True)
-    st.altair_chart(chart_disetujui, use_container_width=True)
+    st.markdown(f"<h5>Pendapatan</h5>", unsafe_allow_html=True)
+
+    with st.expander("Klik di sini untuk melihat lebih detail"):
+        pendapatan = pd.DataFrame({
+            "Pendapatan": [
+                "Pendapatan Transaksi",
+                "Pendapatan SnapClean",
+                "Diskon Transaksi Reguler"
+            ],
+            "Nominal": [
+                df_transaksi["Subtotal"].sum(),
+                df_snapclean["Total Tagihan"].sum(),
+                df_transaksi["Diskon"].sum()
+            ]
+        })
+        pendapatan = pendapatan.sort_values("Nominal", ascending=False).reset_index(drop=True)
+        st.dataframe(pendapatan, use_container_width=True)
+
+    income_without_tax_discount = pendapatan[~pendapatan["Pendapatan"].str.contains("Pajak|Diskon")]["Nominal"].sum()
+    tax_and_discount = pendapatan[pendapatan["Pendapatan"].str.contains("Pajak|Diskon")]["Nominal"].sum()
+    total_pendapatan = income_without_tax_discount - tax_and_discount
+    st.info(f"Total Pendapatan: Rp{total_pendapatan:,}", icon="ℹ️")
+
+    transaksi = df_transaksi.set_index("Tgl Terima")
+    transaksi = transaksi.resample(resample)[["Subtotal"]].sum()
+    transaksi = transaksi.rename(columns={"Subtotal": "Pendapatan Transaksi"})
+
+    diskon = df_transaksi.set_index("Tgl Terima")
+    diskon = diskon.resample(resample)[["Diskon"]].sum()
+    diskon = diskon.rename(columns={"Diskon": "Diskon Transaksi Reguler"})
+
+    snapclean = df_snapclean.set_index("Tanggal Diterima")
+    snapclean = snapclean.resample(resample)[["Total Tagihan"]].sum()
+    snapclean = snapclean.rename(columns={"Total Tagihan": "Pendapatan SnapClean"})
+
+    df_pendapatan = transaksi.merge(diskon, left_index=True, right_index=True, how="left")
+    df_pendapatan = df_pendapatan.merge(snapclean, left_index=True, right_index=True, how="left")
+
+    df_pendapatan = df_pendapatan.reset_index().melt(
+        id_vars="Tgl Terima",
+        value_vars=df_pendapatan.columns,
+        var_name="Pendapatan", 
+        value_name="Nominal"
+    )
+
+    category_pendapatan = st.multiselect("label", label_visibility="collapsed", options=df_pendapatan["Pendapatan"].unique(), default=df_pendapatan["Pendapatan"].unique())
+
+    fig = px.line(df_pendapatan[df_pendapatan["Pendapatan"].isin(category_pendapatan)], x="Tgl Terima", y="Nominal", color="Pendapatan")
+    fig.update_layout(
+        xaxis_title=None,
+        yaxis_title=None,
+        legend_title_text="",
+        margin=dict(t=0, b=0, l=0, r=0),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.2,
+            xanchor="center",
+            x=0.5
+        ),
+        height=300
+    )  
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
+    fig.update_traces(hovertemplate="Tanggal: %{x}<br>Nominal: %{y}")
+    st.plotly_chart(fig, use_container_width=True)
 
 with col2:
-    st.markdown(f"<h5>Status: Ditolak</h5>", unsafe_allow_html=True)
-    st.altair_chart(chart_ditolak, use_container_width=True)
+    st.markdown(f"<h5>Pengeluaran</h5>", unsafe_allow_html=True)
 
-# CSS for styling the boxes
-st.markdown(f"""
-    <style>
-        .akun-kas-container {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            margin-top: -20px;
-            margin-bottom: 20px;
-        }}
-        .akun-kas-box {{
-            flex: 1;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-        }}
-        {"".join([f".akun-kas-box:nth-child({i + 1}) {{ background-color: {color}; width: {100/len(unique_akun_kas)}%; }}" for i, color in enumerate(colors[:len(unique_akun_kas)])])}
-    </style>
-""", unsafe_allow_html=True)
+    with st.expander("Klik di sini untuk melihat lebih detail"):
+        pengeluaran = df_biaya[df_biaya["Status"] == "Disetujui"]
+        pengeluaran = pengeluaran.groupby("Untuk Akun Biaya")[["Nominal Biaya"]].sum().reset_index()
+        pengeluaran = pengeluaran.sort_values("Nominal Biaya", ascending=False).reset_index(drop=True)
+        pengeluaran.columns = ["Pengeluaran", "Nominal"]
+        st.dataframe(pengeluaran, use_container_width=True)
 
-# Creating the container and boxes
-boxes_html = "<div class='akun-kas-container'>"
-for akun in unique_akun_kas:
-    boxes_html += f"<div class='akun-kas-box'>{akun}</div>"
-boxes_html += "</div>"
+    total_pengeluaran = pengeluaran["Nominal"].sum()
+    st.info(f"Total Pengeluaran: Rp{total_pengeluaran:,}", icon="ℹ️")
 
-st.markdown(boxes_html, unsafe_allow_html=True)
+    df_pengeluaran = df_biaya.copy()
+    df_pengeluaran["Tanggal Dibuat"] = pd.to_datetime(df_pengeluaran["Tanggal Dibuat"])
+    df_pengeluaran = df_pengeluaran.set_index("Tanggal Dibuat")
+    df_pengeluaran = df_pengeluaran.groupby("Untuk Akun Biaya").resample(resample).sum().reset_index()
 
-# Row
-title_box_css = """
-<style>
-    .title-box {
-        width: 100%;
-        background-color: #f5f5f7; /* Adjust this color if needed */
-        padding: 10px 0;
-        color: #5a606b;
-        text-align: center;
-        font-size: 24px; /* Adjust font size if needed */
-        margin-bottom: 20px;
-        height: 40px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        font-weight: 600;
-    }
-</style>
-"""
-st.markdown(title_box_css, unsafe_allow_html=True)
+    category_pengeluaran = st.multiselect("label", label_visibility="collapsed", options=df_pengeluaran["Untuk Akun Biaya"].unique(), default=pengeluaran.head(3)["Pengeluaran"])
 
-title = "PELANGGAN"
-st.markdown(f"<div class='title-box'>{title}</div>", unsafe_allow_html=True)
+    fig = px.line(
+        df_pengeluaran[df_pengeluaran["Untuk Akun Biaya"].isin(category_pengeluaran)],
+        x="Tanggal Dibuat",
+        y="Nominal Biaya",
+        color="Untuk Akun Biaya"
+    )
+    fig.update_layout(
+        xaxis_title=None,
+        yaxis_title=None,
+        legend_title_text="",
+        margin=dict(t=0, b=0, l=0, r=0),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.2,
+            xanchor="center",
+            x=0.5
+        ),
+        height=300
+    )  
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
+    fig.update_traces(hovertemplate="Tanggal: %{x}<br>Nominal: %{y}")
+    st.plotly_chart(fig, use_container_width=True)
 
+# Laba/Rugi
+col1, col2 = st.columns(2)
+
+col1.markdown(f"<h5>Laba/Rugi</h5>", unsafe_allow_html=True)
+
+col1.info(f"Total Laba/Rugi: Rp{total_pendapatan - total_pengeluaran:,}", icon="ℹ️")
+
+df_laba_rugi = df_pendapatan.merge(df_pengeluaran, left_on="Tgl Terima", right_on="Tanggal Dibuat", how="left")
+df_laba_rugi = df_laba_rugi[["Tgl Terima", "Nominal", "Nominal Biaya"]]
+df_laba_rugi = df_laba_rugi.set_index("Tgl Terima").resample(resample).sum()
+df_laba_rugi.columns = ["Pendapatan", "Pengeluaran"]
+df_laba_rugi["Laba_Rugi"] = df_laba_rugi["Pendapatan"] - df_laba_rugi["Pengeluaran"]
+
+fig = px.line(df_laba_rugi, x=df_laba_rugi.index, y="Laba_Rugi")
+fig.update_layout(
+    xaxis_title=None,
+    yaxis_title=None,
+    margin=dict(t=0, b=0, l=0, r=0),
+    height=300
+)  
+fig.update_xaxes(showgrid=False, zeroline=False)
+fig.update_yaxes(showgrid=False, zeroline=False)
+fig.update_traces(hovertemplate="Tanggal: %{x}<br>Laba/Rugi: %{y}")
+
+col1.plotly_chart(fig, use_container_width=True)
+
+# Perbandingan
+col2.markdown(f"<h5>Perbandingan antara Omzet, Pengeluaran, dan Laba/Rugi</h5>", unsafe_allow_html=True)
+
+df_omset = df_transaksi[["Tgl Terima", "Subtotal", "Tambahan Express", "Diskon", "Pajak"]]
+df_omset["omset"] = df_omset["Subtotal"] + df_omset["Tambahan Express"] - df_omset["Diskon"] + df_omset["Pajak"]
+df_omset = df_omset.set_index("Tgl Terima")
+df_omset = df_omset.resample(resample).sum()[["omset"]]
+
+df_perbandingan = pd.concat([df_omset, df_laba_rugi], axis=1)
+df_perbandingan = df_perbandingan.drop("Pendapatan", axis=1)
+df_perbandingan.columns = ["Omzet", "Pengeluaran", "Laba/Rugi"]
+
+fig = go.Figure()
+
+for column in df_perbandingan.columns:
+    fig.add_trace(go.Scatter(x=df_perbandingan.index, y=df_perbandingan[column], mode="lines", name=column))
+
+fig.update_layout(
+    margin=dict(t=0, b=0, l=0, r=0),
+    legend=dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.2,
+        xanchor="center",
+        x=0.5
+    ),
+    height=300
+)
+fig.update_xaxes(showgrid=False, zeroline=False, title_text=None)
+fig.update_yaxes(showgrid=False, zeroline=False, title_text=None)
+
+col2.plotly_chart(fig, use_container_width=True)
+
+# Pengeluaran Bar Chart
+col1 = st.columns(1)[0]
+
+col1.markdown(f"<h5>Pengeluaran</h5>", unsafe_allow_html=True)
+
+df_pengeluaran_bar = df_biaya[df_biaya["Status"] == "Disetujui"]
+df_pengeluaran_bar = df_pengeluaran_bar.groupby(["Untuk Akun Biaya", "Diambil Dari Akun Kas"])["Nominal Biaya"].sum().reset_index()
+df_pengeluaran_bar = df_pengeluaran_bar.sort_values(by="Nominal Biaya", ascending=False)
+
+fig = px.histogram(
+    df_pengeluaran_bar,
+    x="Nominal Biaya",
+    y="Untuk Akun Biaya",
+    color="Diambil Dari Akun Kas",
+    category_orders={"Untuk Akun Biaya": df_pengeluaran_bar.groupby("Untuk Akun Biaya")["Nominal Biaya"].sum().sort_values(ascending=False).index}
+)
+fig.update_layout(
+    xaxis_title=None,
+    legend=dict(
+        title="",
+        orientation="h",
+        yanchor="top",
+        y=-0.2,
+        xanchor="center",
+        x=0.5
+    ),
+    margin=dict(t=0, b=0, l=0, r=0),
+    height=400
+)
+col1.plotly_chart(fig, use_container_width=True)
+
+# Top 10 Pelanggan
 col1, col2, col3 = st.columns(3)
-
 with col1:
     st.markdown(f"<h5>Pelanggan Tidak Aktif</h5>", unsafe_allow_html=True)
 
-    last_order_date = df_transaksi.groupby('Customer')['Tgl Terima'].max()
-    current_date = df_transaksi['Tgl Terima'].max()
+    last_order_date = df_transaksi.groupby("Customer")["Tgl Terima"].max()
+    current_date = df_transaksi["Tgl Terima"].max()
 
     intervals = [1, 3, 6, 9]
-    colors = ["#3d39cc", "#8a7fd8", "#b3a5e6", "#d4ccf3", "#ebe7fa"]
     customers_count = []
 
     previous_threshold = current_date
@@ -416,152 +476,115 @@ with col1:
         previous_threshold = threshold_date
 
     inactive_customers = pd.DataFrame({
-        'Bulan': [f"{i} Bulan" for i in intervals],
-        'Jumlah Pelanggan': customers_count
+        "Bulan": [f"{i} Bulan" for i in intervals],
+        "Jumlah Pelanggan": customers_count
     })
 
-    # Create a donut chart for inactive customers
-    inactive_customers_donut_chart = alt.Chart(inactive_customers).mark_arc(innerRadius=50).encode(
-        theta=alt.Theta("Jumlah Pelanggan:Q", stack=True, title=None),
-        color=alt.Color("Bulan:N", legend=alt.Legend(orient="bottom"), scale=alt.Scale(domain=[f"{i} Bulan" for i in intervals], range=colors)),
-        tooltip=["Bulan:N", "Jumlah Pelanggan:Q"]
-    ).properties(
-        width=300,
+    fig = go.Figure(data=[go.Pie(labels=inactive_customers["Bulan"], values=inactive_customers["Jumlah Pelanggan"], hole=.3)])
+    fig.update_layout(
+        legend=dict(
+            title="",
+            orientation="h",
+            yanchor="top",
+            y=-0.2,
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(t=0, b=0, l=0, r=0),
         height=300
     )
-
-    st.altair_chart(inactive_customers_donut_chart, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 with col2:
     st.markdown(f"<h5>10 Pelanggan Teratas (Jumlah Transaksi)</h5>", unsafe_allow_html=True)
 
-    # Calculate "Total Transaksi" for each customer
     df_transaksi['Total_Transaction'] = df_transaksi["Subtotal"] + df_transaksi["Tambahan Express"]
     customer_total_transaction = df_transaksi.groupby("Customer")['Total_Transaction'].sum().reset_index()
 
-    # Calculate average days between repetitive orders for each customer
     df_sorted_transactions = df_transaksi.sort_values(by="Tgl Terima")
     days_difference = df_sorted_transactions.groupby('Customer')['Tgl Terima'].diff().dt.days
     avg_days_between_orders = days_difference.groupby(df_sorted_transactions['Customer']).mean().reset_index()
     avg_days_between_orders.rename(columns={"Tgl Terima": "Average_Days_Between_Orders"}, inplace=True)
 
-    # Identify top 10 customers by number of transactions
     top_customers = df_transaksi.groupby("Customer").nunique()["No Nota"].sort_values(ascending=False).head(10).reset_index()
 
-    # Merge this information with the `top_customers` DataFrame
     top_customers = top_customers.merge(customer_total_transaction, on="Customer", how="left")
     top_customers = top_customers.merge(avg_days_between_orders, on="Customer", how="left")
 
-    # Update the Altair chart definition
-    top_customers_chart = alt.Chart(top_customers).mark_bar(color="#3d39cc").encode(
-        y=alt.Y("Customer:N", title=None, sort="-x"),
-        x=alt.X("No Nota:Q", title="Jumlah Transaksi"),
-        tooltip=[
-            alt.Tooltip("Customer:N", title="Pelanggan"),
-            alt.Tooltip("No Nota:Q", title="Jumlah Transaksi"),
-            alt.Tooltip("Average_Days_Between_Orders:Q", title="Rata-rata Hari Antar Transaksi", format=".1f")
-        ]
-    ).properties(
-        height=300
-    ).configure_axis(
-        grid=False
+    fig = px.bar(
+        top_customers,
+        x="No Nota",
+        y="Customer",
+        orientation="h",
+        labels={"No Nota": "Jumlah Transaksi", "Customer": "Pelanggan"},
+        hover_data=["Average_Days_Between_Orders"]
     )
-
-    st.altair_chart(top_customers_chart, use_container_width=True)
+    fig.update_layout(
+        yaxis=dict(categoryorder="total ascending", title=None),
+        margin=dict(t=0, b=0, l=0, r=0),
+        height=300
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 with col3:
     st.markdown(f"<h5>10 Pelanggan Teratas (Total Transaksi)</h5>", unsafe_allow_html=True)
 
-    # Rank customers based on total transactions and take the top 10
     top_total_value_customers = customer_total_transaction.sort_values(by="Total_Transaction", ascending=False).head(10)
-
-    # Merge this information with the `avg_days_between_orders` DataFrame
     top_total_value_customers = top_total_value_customers.merge(avg_days_between_orders, on="Customer", how="left")
 
-    # Create the Altair chart
-    top_value_customers_chart = alt.Chart(top_total_value_customers).mark_bar(color="#3d39cc").encode(
-        y=alt.Y("Customer:N", title=None, sort="-x"),
-        x=alt.X("Total_Transaction:Q", title="Total Transaksi"),
-        tooltip=[
-            alt.Tooltip("Customer:N", title="Pelanggan"),
-            alt.Tooltip("Total_Transaction:Q", title="Total Transaksi", format=".0f"),
-            alt.Tooltip("Average_Days_Between_Orders:Q", title="Rata-rata Hari Antar Transaksi", format=".1f")
-        ]
-    ).properties(
-        height=300
-    ).configure_axis(
-        grid=False
+    fig = px.bar(
+        top_total_value_customers,
+        x="Total_Transaction",
+        y="Customer",
+        orientation="h",
+        labels={"Total_Transaction": "Total Transaksi", "Customer": "Pelanggan"},
+        hover_data=["Average_Days_Between_Orders"]
     )
+    fig.update_layout(
+        yaxis=dict(categoryorder="total ascending", title=None),
+        margin=dict(t=0, b=0, l=0, r=0),
+        height=300
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.altair_chart(top_value_customers_chart, use_container_width=True)
-
-# Row
-title_box_css = """
-<style>
-    .title-box {
-        width: 100%;
-        background-color: #f5f5f7; /* Adjust this color if needed */
-        padding: 10px 0;
-        color: #5a606b;
-        text-align: center;
-        font-size: 24px; /* Adjust font size if needed */
-        margin-bottom: 20px;
-        height: 40px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        font-weight: 600;
-    }
-</style>
-"""
-st.markdown(title_box_css, unsafe_allow_html=True)
-
-title = "LAYANAN"
-st.markdown(f"<div class='title-box'>{title}</div>", unsafe_allow_html=True)
-
+# Top 10 Layanan
 col1, col2 = st.columns(2)
-# Top 10 services based on number of transactions
 with col1:
     st.markdown(f"<h5>10 Layanan Teratas (Jumlah Transaksi)</h5>", unsafe_allow_html=True)
 
     top_services_by_transactions = df_transaksi["Detail Layanan"].value_counts().head(10).reset_index()
     top_services_by_transactions.columns = ["Detail Layanan", "Jumlah Transaksi"]
 
-    # Create the Altair chart
-    top_services_transactions_chart = alt.Chart(top_services_by_transactions).mark_bar(color="#3d39cc").encode(
-        y=alt.Y("Detail Layanan:N", title=None, sort="-x"),
-        x=alt.X("Jumlah Transaksi:Q", title="Jumlah Transaksi"),
-        tooltip=[
-            alt.Tooltip("Detail Layanan:N", title="Layanan"),
-            alt.Tooltip("Jumlah Transaksi:Q", title="Jumlah Transaksi")
-        ]
-    ).properties(
-        height=300
-    ).configure_axis(
-        grid=False
+    fig = px.bar(
+        top_services_by_transactions,
+        x="Jumlah Transaksi",
+        y="Detail Layanan",
+        orientation="h",
     )
+    fig.update_layout(
+        yaxis=dict(categoryorder="total ascending", title=None),
+        margin=dict(t=0, b=0, l=0, r=0),
+        height=300
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.altair_chart(top_services_transactions_chart, use_container_width=True)
-
-# Top 10 services based on total transaction value (subtotal + tambahan express)
 with col2:
     st.markdown(f"<h5>10 Layanan Teratas (Total Transaksi)</h5>", unsafe_allow_html=True)
 
     top_services_by_value = df_transaksi.groupby("Detail Layanan")["Total_Transaction"].sum().nlargest(10).reset_index()
     top_services_by_value.columns = ["Detail Layanan", "Total Transaksi"]
 
-    # Create the Altair chart
-    top_services_value_chart = alt.Chart(top_services_by_value).mark_bar(color="#3d39cc").encode(
-        y=alt.Y("Detail Layanan:N", title=None, sort="-x"),
-        x=alt.X("Total Transaksi:Q", title="Total Transaksi"),
-        tooltip=[
-            alt.Tooltip("Detail Layanan:N", title="Layanan"),
-            alt.Tooltip("Total Transaksi:Q", title="Total Transaksi", format=".0f")
-        ]
-    ).properties(
-        height=300
-    ).configure_axis(
-        grid=False
+    fig_top_services_value_plotly = px.bar(
+        top_services_by_value,
+        x="Total Transaksi",
+        y="Detail Layanan",
+        orientation="h",
     )
+    fig.update_layout(
+        yaxis=dict(categoryorder="total ascending", title=None),
+        margin=dict(t=0, b=0, l=0, r=0),
+        height=300
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.altair_chart(top_services_value_chart, use_container_width=True)
+st.markdown(f'<style>{metric_css}</style>',unsafe_allow_html=True)
